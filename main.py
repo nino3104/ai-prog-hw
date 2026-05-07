@@ -268,7 +268,7 @@ passenger_groups = [df_passenger[df_passenger['passenger_count'] == i]['fare_amo
                     for i in range(1, 7)]
 
 plt.figure(figsize=(9, 5))
-box = plt.boxplot(passenger_groups, labels=range(1, 7), patch_artist=True,
+box = plt.boxplot(passenger_groups, tick_labels=range(1, 7), patch_artist=True,
                   medianprops=dict(color='black', linewidth=1.5))
 
 # 给箱子涂上渐变色
@@ -308,3 +308,101 @@ plt.tight_layout()
 plt.savefig('outputs/avg_speed_by_hour.png', dpi=150)
 plt.show()
 print("图5已保存至 outputs/avg_speed_by_hour.png")
+
+
+# ==================== M3 预测模型 ====================
+print("\n========== M3：预测模型 ==========")
+
+# ----- 1. 构建监督学习数据集 -----
+# 聚合：按上车区域、小时、星期几 统计订单量
+df['pickup_weekday'] = df['pickup_weekday'].astype(int)
+
+agg_cols = ['PULocationID', 'pickup_hour', 'pickup_weekday', 'is_peak', 'is_weekend']
+demand_df = df.groupby(agg_cols).size().reset_index(name='demand')
+
+print(f"聚合后样本数：{len(demand_df)}")
+
+# 特征和标签
+X = demand_df[['PULocationID', 'pickup_hour', 'pickup_weekday', 'is_peak', 'is_weekend']].values
+y = demand_df['demand'].values
+
+# 划分训练/测试集（8:2）
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+print(f"训练集样本数：{len(X_train)}，测试集样本数：{len(X_test)}")
+
+
+# ----- 2. 神经网络模型（TensorFlow/Keras）-----
+import tensorflow as tf
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+import numpy as np
+
+# 特征标准化（对区域ID这种大数值很重要）
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# 构建模型
+model = tf.keras.Sequential([
+    tf.keras.layers.Dense(64, activation='relu', input_shape=(X_train.shape[1],)),
+    tf.keras.layers.Dense(32, activation='relu'),
+    tf.keras.layers.Dense(16, activation='relu'),
+    tf.keras.layers.Dense(1)  # 输出：预测需求量（回归任务）
+])
+
+model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+model.summary()
+
+# 训练
+history = model.fit(X_train_scaled, y_train, 
+                    validation_data=(X_test_scaled, y_test),
+                    epochs=50, batch_size=128, verbose=1)
+
+# 画 loss 曲线
+plt.figure(figsize=(8, 4))
+plt.plot(history.history['loss'], label='训练集 loss', color='steelblue')
+plt.plot(history.history['val_loss'], label='验证集 loss', color='darkorange')
+plt.title('神经网络 Loss 曲线', fontsize=14)
+plt.xlabel('Epoch')
+plt.ylabel('Loss (MSE)')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig('outputs/nn_loss_curve.png', dpi=150)
+plt.show()
+print("神经网络 loss 曲线已保存至 outputs/nn_loss_curve.png")
+
+# 测试集评估
+y_pred_nn = model.predict(X_test_scaled).flatten()
+mae_nn = mean_absolute_error(y_test, y_pred_nn)
+rmse_nn = np.sqrt(mean_squared_error(y_test, y_pred_nn))
+print(f"\n神经网络测试集：MAE = {mae_nn:.2f}，RMSE = {rmse_nn:.2f}")
+
+
+# ----- 3. 随机森林对比模型 -----
+print("\n========== 随机森林对比 ==========")
+
+from sklearn.ensemble import RandomForestRegressor
+
+# 随机森林不强制标准化，但标准化了也能用，我们用原始数据保持公平
+rf = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+rf.fit(X_train, y_train)
+
+y_pred_rf = rf.predict(X_test)
+mae_rf = mean_absolute_error(y_test, y_pred_rf)
+rmse_rf = np.sqrt(mean_squared_error(y_test, y_pred_rf))
+
+print(f"随机森林测试集：MAE = {mae_rf:.2f}，RMSE = {rmse_rf:.2f}")
+
+# 对比汇总
+print("\n========== M3 模型对比汇总 ==========")
+print(f"{'模型':<12} {'MAE':<12} {'RMSE':<12}")
+print(f"{'神经网络':<12} {mae_nn:<12.2f} {rmse_nn:<12.2f}")
+print(f"{'随机森林':<12} {mae_rf:<12.2f} {rmse_rf:<12.2f}")
+print("\n结论：", end="")
+if rmse_rf < rmse_nn:
+    print(f"随机森林 RMSE 更低（{rmse_rf:.2f} < {rmse_nn:.2f}），在此任务上表现更优。")
+else:
+    print(f"神经网络 RMSE 更低（{rmse_nn:.2f} < {rmse_rf:.2f}），在此任务上表现更优。")

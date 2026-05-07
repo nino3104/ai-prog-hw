@@ -123,3 +123,64 @@ print("新增特征：")
 print(df[['pickup_hour', 'pickup_weekday', 'is_peak', 'is_weekend', 
           'trip_duration_min', 'avg_speed_mph', 'fare_per_mile']].head())
 print(f"\n最终数据量：{len(df)} 条，共 {len(df.columns)} 列")
+
+
+# ==================== M2 分析可视化 ====================
+import matplotlib.pyplot as plt
+import matplotlib
+import os
+
+# ----- 中文字体设置（防止中文乱码）-----
+# 尝试使用 SimHei（Windows 常见中文字体），若无则回退默认
+try:
+    matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial']
+    matplotlib.rcParams['axes.unicode_minus'] = False   # 解决负号显示为方块的问题
+except:
+    pass
+
+# 确保 outputs 目录存在
+os.makedirs("outputs", exist_ok=True)
+
+# ----- 图1：分小时平均订单量（折线图）-----
+print("\n========== 图1：分小时平均订单量 ==========")
+
+# 按小时统计订单数，然后对天数求平均（因为每天订单量波动大，取平均更能体现时间规律）
+hourly_orders = df.groupby('pickup_hour').size()
+# 计算有多少个不同日期，用于求均值
+num_days = df['pickup_date'].nunique()
+hourly_avg = hourly_orders / num_days
+
+plt.figure(figsize=(10, 5))
+plt.plot(hourly_avg.index, hourly_avg.values, marker='o', linewidth=2, color='steelblue')
+plt.title('2023年1月 纽约市黄色出租车分小时平均订单量', fontsize=14)
+plt.xlabel('小时 (0-23)', fontsize=12)
+plt.ylabel('平均订单量', fontsize=12)
+plt.xticks(range(0, 24))
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig('outputs/hourly_avg_orders.png', dpi=150)
+plt.show()
+print("图1已保存至 outputs/hourly_avg_orders.png")
+
+# ----- 图2：工作日 vs 周末分小时订单量对比 -----
+print("\n========== 图2：工作日 vs 周末分小时订单量 ==========")
+
+# 按小时和是否周末分组统计订单数
+grouped = df.groupby(['pickup_hour', 'is_weekend']).size().unstack(fill_value=0)
+# 分别计算平均（因为工作日和周末天数不同）
+weekday_counts = grouped[0] / df[df['is_weekend'] == 0]['pickup_date'].nunique()
+weekend_counts = grouped[1] / df[df['is_weekend'] == 1]['pickup_date'].nunique()
+
+plt.figure(figsize=(10, 5))
+plt.plot(weekday_counts.index, weekday_counts.values, marker='o', label='工作日', color='steelblue')
+plt.plot(weekend_counts.index, weekend_counts.values, marker='s', label='周末', color='darkorange')
+plt.title('工作日 vs 周末 分小时平均订单量', fontsize=14)
+plt.xlabel('小时 (0-23)', fontsize=12)
+plt.ylabel('平均订单量', fontsize=12)
+plt.xticks(range(0, 24))
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig('outputs/hourly_weekday_vs_weekend.png', dpi=150)
+plt.show()
+print("图2已保存至 outputs/hourly_weekday_vs_weekend.png")

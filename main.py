@@ -406,3 +406,107 @@ if rmse_rf < rmse_nn:
     print(f"随机森林 RMSE 更低（{rmse_rf:.2f} < {rmse_nn:.2f}），在此任务上表现更优。")
 else:
     print(f"神经网络 RMSE 更低（{rmse_nn:.2f} < {rmse_rf:.2f}），在此任务上表现更优。")
+
+
+    # ==================== M4 问答接口 ====================
+print("\n========== M4：智能问答系统 ==========")
+
+import openai
+
+# ---------- API 配置 ----------
+API_KEY = "sk-dopgsmtlgjxbhbsyntefbizlyetmyvcyvquhqgdklbzsnuxi"  
+API_BASE = "https://api.siliconflow.cn/v1"
+
+client = openai.OpenAI(
+    api_key=API_KEY,
+    base_url=API_BASE
+)
+
+# ---------- System Prompt ----------
+SYSTEM_PROMPT = """你是一个纽约出租车数据分析助手，基于2023年1月黄色出租车数据（约293万条行程）回答问题。
+你可以帮助用户理解出行规律、区域热度、费用影响因素、交通速度变化等。
+回答时请尽量简洁、数据驱动，如果用户的问题超出数据范围，请礼貌说明并给出合理建议。"""
+
+# ---------- 本地规则匹配函数 ----------
+def rule_based_answer(question):
+    """尝试用规则匹配用户问题，返回 (bool, str, str) -> (是否匹配成功, 回答文本, 可能的图表路径)"""
+    q = question.lower()
+    
+    # 1. 时段查询：哪个小时订单最多？
+    if any(w in q for w in ['小时', '几点', '时段']) and any(w in q for w in ['最多', '高峰', '最多订单']):
+        peak_hour = df['pickup_hour'].value_counts().idxmax()
+        peak_count = df['pickup_hour'].value_counts().max()
+        return True, f"订单最多的小时是 {peak_hour}:00-{peak_hour+1}:00，共 {peak_count} 单（全月）", "outputs/hourly_avg_orders.png"
+    
+    # 2. 区域排名：上下车最多的区域？
+    if any(w in q for w in ['区域', '哪里', '热门']) and any(w in q for w in ['最多', 'top', '排名']):
+        top_pu = df['PULocationID'].value_counts().idxmax()
+        top_do = df['DOLocationID'].value_counts().idxmax()
+        zone_dict = pd.read_csv("data/taxi_zone_lookup.csv")[['LocationID', 'Zone']].set_index('LocationID')['Zone'].to_dict()
+        pu_name = zone_dict.get(top_pu, str(top_pu))
+        do_name = zone_dict.get(top_do, str(top_do))
+        return True, f"上车最多区域：{pu_name}；下车最多区域：{do_name}", "outputs/top10_pu_do_zones.png"
+    
+    # 3. 需求预测：某区域某时段预测需求量
+    if any(w in q for w in ['预测', '需求']) and any(w in q for w in ['区域', '时段', '小时']):
+        # 简单返回训练好的随机森林预测（这里我们取测试集的平均预测值作为示例）
+        avg_demand = y_pred_rf.mean()  # 随机森林预测结果
+        return True, f"根据模型预测，平均需求量约为 {avg_demand:.0f} 单/区域-时段", None
+    
+    # 4. 费用查询：大概多少钱
+    if any(w in q for w in ['费用', '车费', '价格', '多少钱']):
+        avg_fare = df['fare_amount'].mean()
+        avg_distance = df['trip_distance'].mean()
+        return True, f"2023年1月平均车费为 ${avg_fare:.2f}，平均行程距离 {avg_distance:.2f} 英里", "outputs/fare_vs_distance_peak.png"
+    
+    # 5. 速度/拥堵查询
+    if any(w in q for w in ['速度', '拥堵', '堵车', '快慢']):
+        speed_peak = df[df['is_peak']==1]['avg_speed_mph'].mean()
+        speed_offpeak = df[df['is_peak']==0]['avg_speed_mph'].mean()
+        return True, f"高峰期平均速度 {speed_peak:.1f} mph，非高峰期 {speed_offpeak:.1f} mph", "outputs/avg_speed_by_hour.png"
+    
+    # 未匹配
+    return False, "", None
+
+# ---------- 大模型兜底函数 ----------
+def ask_llm(question):
+    try:
+        response = client.chat.completions.create(
+            model="Qwen/Qwen2.5-7B-Instruct",  
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": question}
+            ],
+            temperature=0.7,
+            max_tokens=300
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"调用大模型失败：{str(e)}"
+
+# ---------- 主问答循环 ----------
+print("\n欢迎使用 NYC 出租车出行智能问答系统！")
+print("你可以问我：哪个小时订单最多？哪个区域最热门？预测需求？车费多少？交通速度快吗？")
+print("输入 'exit' 退出。\n")
+
+while True:
+    user_input = input("用户：").strip()
+    if not user_input:
+        continue
+    if user_input.lower() in ['exit', 'quit', '退出']:
+        print("系统：再见！")
+        break
+    
+    # 先尝试规则匹配
+    matched, answer, chart_path = rule_based_answer(user_input)
+    
+    if matched:
+        print(f"系统（规则）：{answer}")
+        if chart_path:
+            print(f"系统：相关图表已保存，路径：{chart_path}")
+    else:
+        # 未匹配，调用大模型
+        print("系统（大模型）：思考中...")
+        llm_answer = ask_llm(user_input)
+        print(f"系统（大模型）：{llm_answer}")
+        # print("（提示：本次使用了 DeepSeek/Qwen 大模型进行回答）")

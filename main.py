@@ -431,6 +431,8 @@ SYSTEM_PROMPT = """你是一个纽约出租车数据分析助手，基于2023年
 def rule_based_answer(question):
     """尝试用规则匹配用户问题，返回 (bool, str, str) -> (是否匹配成功, 回答文本, 可能的图表路径)"""
     q = question.lower()
+    if '人工智能' in q or '帮我分析' in q or '详细说说' in q:
+        return False, "", None   # 强行跳过规则，走大模型
     
     # 1. 时段查询：哪个小时订单最多？
     if any(w in q for w in ['小时', '几点', '时段']) and any(w in q for w in ['最多', '高峰', '最多订单']):
